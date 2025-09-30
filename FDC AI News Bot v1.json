@@ -1,0 +1,559 @@
+{
+  "name": "FDC AI News Bot v1 - Fixed",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 9 * * *"
+            }
+          ]
+        }
+      },
+      "id": "a16bc504-0069-41a0-bfba-4e9079ad38fb",
+      "name": "Daily at 9 AM",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "url": "https://www.edsurge.com/news.rss",
+        "responseFormat": "string",
+        "options": {}
+      },
+      "id": "dc70d523-5170-4b88-8f8c-1002b048ef9e",
+      "name": "EdSurge HTTP",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [460, 180]
+    },
+    {
+      "parameters": {
+        "jsCode": "let xml = $json;\nif (typeof xml !== 'string') {\n  xml = xml.data?.toString() || '';\n}\nxml = xml.replace(/&(?!amp;|lt;|gt;|quot;|apos;)/g, '&amp;');\nreturn [{ json: { data: xml } }];"
+      },
+      "id": "421791f6-d75e-4851-9406-03edbb8484a9",
+      "name": "EdSurge Fix Entities",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, 180]
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "id": "d03a7980-9508-47c4-acff-6baabe7f6510",
+      "name": "EdSurge XML→JSON",
+      "type": "n8n-nodes-base.xml",
+      "typeVersion": 1,
+      "position": [900, 180]
+    },
+    {
+      "parameters": {
+        "url": "https://edtechmagazine.com/k12/rss.xml",
+        "options": {}
+      },
+      "id": "2edfdfdc-8935-4579-938d-03948e9ffd75",
+      "name": "EdTech Magazine RSS",
+      "type": "n8n-nodes-base.rssFeedRead",
+      "typeVersion": 1,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "url": "https://techcrunch.com/tag/edtech/feed/",
+        "options": {}
+      },
+      "id": "a351e280-0609-4d7a-b1f8-0c63ef9e61ed",
+      "name": "TechCrunch RSS",
+      "type": "n8n-nodes-base.rssFeedRead",
+      "typeVersion": 1,
+      "position": [460, 420]
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combinationMode": "multiplex",
+        "options": {}
+      },
+      "id": "3050a3d5-ba44-4167-942a-7a923d19592a",
+      "name": "Combine Feeds",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 2.1,
+      "position": [1120, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\nconst output = [];\nconst yesterday = new Date();\nyesterday.setDate(yesterday.getDate() - 1);\n\nfor (const item of items) {\n  const data = item.json;\n  const pubDate = new Date(data.isoDate || data.pubDate || Date.now());\n  \n  if (pubDate >= yesterday) {\n    const articleId = Buffer.from(data.link || '').toString('base64').substring(0, 32);\n    output.push({\n      json: {\n        id: articleId,\n        title: data.title || 'Untitled',\n        link: data.link || '',\n        snippet: (data.contentSnippet || data.description || '').substring(0, 500),\n        pubDate: pubDate.toISOString()\n      }\n    });\n  }\n}\n\nreturn output;"
+      },
+      "id": "48263c44-9e5f-48b0-bc2c-61dc6ea54f5e",
+      "name": "Filter Last 24h",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1340, 300]
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "key": "posted_article_ids",
+        "options": {}
+      },
+      "id": "36b5d8e9-2196-4f2d-ae4c-8926f9b70fb4",
+      "name": "Get Posted IDs",
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [1560, 300],
+      "credentials": {
+        "redis": {
+          "id": "TRaOuFPqICzqFxNU",
+          "name": "Redis account"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const articles = $input.all().filter(item => item.json.id);\nconst postedData = $('Get Posted IDs').first()?.json?.value;\nconst posted = postedData ? JSON.parse(postedData) : [];\nconst newArticles = articles.filter(item => !posted.includes(item.json.id));\n\nif (newArticles.length === 0) {\n  return [{ json: { noNewArticles: true } }];\n}\n\nreturn newArticles;"
+      },
+      "id": "a42dc4b6-e628-4b77-910a-78c0e7fcd7f8",
+      "name": "Remove Duplicates",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1780, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.noNewArticles }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "check-new-articles",
+      "name": "Has New Articles?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [2000, 300]
+    },
+    {
+      "parameters": {
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "value": "C09HYT0NLHJ",
+          "mode": "id"
+        },
+        "text": "ℹ️ *Daily AI/EdTech News Bot*\n\nNo new articles today - all recent articles were already posted.\n\nThe bot will check again tomorrow at 9 AM.",
+        "otherOptions": {}
+      },
+      "id": "eb94418b-d018-488e-bc27-2689a4f44d27",
+      "name": "No News Message",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.1,
+      "position": [2220, 180],
+      "credentials": {
+        "slackApi": {
+          "id": "2Q9qzTGU13O3lVjy",
+          "name": "Slack account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "modelId": "gpt-4o-mini",
+        "messages": {
+          "values": [
+            {
+              "content": "=You are analyzing articles for NativeCamp (English learning platform).\n\nRate this article's relevance (0-10):\nTitle: {{ $json.title }}\nContent: {{ $json.snippet }}\n\nCriteria:\n- AI for English learning/tutoring: 10\n- EdTech platforms, speech AI, chatbots: 8-9\n- General AI in education: 5-7\n- Unrelated: 0-3\n\nRespond with ONLY a number."
+            }
+          ]
+        },
+        "options": {
+          "maxTokens": 10,
+          "temperature": 0.3
+        }
+      },
+      "id": "9ce96e28-431d-48c8-9908-5de494f39c62",
+      "name": "AI Relevance Score",
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 1.3,
+      "position": [2220, 420],
+      "credentials": {
+        "openAiApi": {
+          "id": "5G7hKsoLwifnsKh6",
+          "name": "OpenAi account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\nconst scored = [];\n\nfor (const item of items) {\n  const response = item.json.message?.content || item.json.output || '';\n  const scoreMatch = response.match(/\\d+/);\n  const score = scoreMatch ? parseInt(scoreMatch[0]) : 0;\n  \n  if (score >= 6) {\n    scored.push({\n      json: {\n        ...item.json,\n        relevanceScore: score\n      }\n    });\n  }\n}\n\nif (scored.length === 0) {\n  return [{ json: { noRelevantArticles: true } }];\n}\n\nscored.sort((a, b) => b.json.relevanceScore - a.json.relevanceScore);\nreturn [scored[0]];"
+      },
+      "id": "4206d4a4-318b-4c8f-9ea9-a7dbe0f1052b",
+      "name": "Pick Best Article",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2440, 420]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.noRelevantArticles }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "check-relevant",
+      "name": "Is Relevant?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [2660, 420]
+    },
+    {
+      "parameters": {
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "value": "C09HYT0NLHJ",
+          "mode": "id"
+        },
+        "text": "ℹ️ *Daily AI/EdTech News Bot*\n\nNo highly relevant articles today - all scored below 6/10.\n\nThe bot will check again tomorrow at 9 AM.",
+        "otherOptions": {}
+      },
+      "id": "low-relevance-msg",
+      "name": "Low Relevance Message",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.1,
+      "position": [2880, 300],
+      "credentials": {
+        "slackApi": {
+          "id": "2Q9qzTGU13O3lVjy",
+          "name": "Slack account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "modelId": "gpt-4o-mini",
+        "messages": {
+          "values": [
+            {
+              "content": "=Summarize this article in 2-3 sentences for an AI product team:\n\nTitle: {{ $json.title }}\nContent: {{ $json.snippet }}\n\nFocus on what's new and why it matters for English learning platforms."
+            }
+          ]
+        },
+        "options": {
+          "maxTokens": 150,
+          "temperature": 0.5
+        }
+      },
+      "id": "7fdb098d-cdc8-464a-b22c-e0fe58156378",
+      "name": "Summarize (EN)",
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 1.3,
+      "position": [2880, 540],
+      "credentials": {
+        "openAiApi": {
+          "id": "5G7hKsoLwifnsKh6",
+          "name": "OpenAi account"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "modelId": "gpt-4o-mini",
+        "messages": {
+          "values": [
+            {
+              "content": "=Translate this English text to natural Japanese:\n\n{{ $('Summarize (EN)').item.json.message.content }}"
+            }
+          ]
+        },
+        "options": {
+          "maxTokens": 200,
+          "temperature": 0.3
+        }
+      },
+      "id": "b618f678-72f9-419a-9e96-6cd04c79e6d4",
+      "name": "Translate (JP)",
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 1.3,
+      "position": [3100, 540],
+      "credentials": {
+        "openAiApi": {
+          "id": "5G7hKsoLwifnsKh6",
+          "name": "OpenAi account"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "C09HYT0NLHJ"
+        },
+        "text": "=📰 *Daily AI/EdTech Update*\n\n*{{ $('Pick Best Article').item.json.title }}*\n🔗 {{ $('Pick Best Article').item.json.link }}\n\n*🇬🇧 Summary:*\n{{ $('Summarize (EN)').item.json.message.content }}\n\n*🇯🇵 まとめ:*\n{{ $('Translate (JP)').item.json.message.content }}\n\n_Relevance: {{ $('Pick Best Article').item.json.relevanceScore }}/10_",
+        "otherOptions": {}
+      },
+      "id": "e401df32-383a-41ef-bf31-945ed836237d",
+      "name": "Post to Slack",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.1,
+      "position": [3320, 540],
+      "credentials": {
+        "slackApi": {
+          "id": "2Q9qzTGU13O3lVjy",
+          "name": "Slack account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "set",
+        "key": "posted_article_ids",
+        "value": "={{ JSON.stringify([...(JSON.parse($('Get Posted IDs').item?.json?.value || '[]')), $('Pick Best Article').item.json.id].slice(-100)) }}"
+      },
+      "id": "9a995f4d-6261-45cc-bf27-54e663d563bd",
+      "name": "Save Article ID",
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [3540, 540],
+      "credentials": {
+        "redis": {
+          "id": "TRaOuFPqICzqFxNU",
+          "name": "Redis account"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Daily at 9 AM": {
+      "main": [
+        [
+          {
+            "node": "EdSurge HTTP",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "EdTech Magazine RSS",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "TechCrunch RSS",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "EdSurge HTTP": {
+      "main": [
+        [
+          {
+            "node": "EdSurge Fix Entities",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "EdSurge Fix Entities": {
+      "main": [
+        [
+          {
+            "node": "EdSurge XML→JSON",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "EdSurge XML→JSON": {
+      "main": [
+        [
+          {
+            "node": "Combine Feeds",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "EdTech Magazine RSS": {
+      "main": [
+        [
+          {
+            "node": "Combine Feeds",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "TechCrunch RSS": {
+      "main": [
+        [
+          {
+            "node": "Combine Feeds",
+            "type": "main",
+            "index": 2
+          }
+        ]
+      ]
+    },
+    "Combine Feeds": {
+      "main": [
+        [
+          {
+            "node": "Filter Last 24h",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter Last 24h": {
+      "main": [
+        [
+          {
+            "node": "Get Posted IDs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Posted IDs": {
+      "main": [
+        [
+          {
+            "node": "Remove Duplicates",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Remove Duplicates": {
+      "main": [
+        [
+          {
+            "node": "Has New Articles?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has New Articles?": {
+      "main": [
+        [
+          {
+            "node": "No News Message",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "AI Relevance Score",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Relevance Score": {
+      "main": [
+        [
+          {
+            "node": "Pick Best Article",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pick Best Article": {
+      "main": [
+        [
+          {
+            "node": "Is Relevant?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Relevant?": {
+      "main": [
+        [
+          {
+            "node": "Low Relevance Message",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Summarize (EN)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Summarize (EN)": {
+      "main": [
+        [
+          {
+            "node": "Translate (JP)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Translate (JP)": {
+      "main": [
+        [
+          {
+            "node": "Post to Slack",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Post to Slack": {
+      "main": [
+        [
+          {
+            "node": "Save Article ID",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "tags": []
+}
